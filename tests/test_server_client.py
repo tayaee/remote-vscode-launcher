@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -10,8 +11,11 @@ from remote_vscode_launcher.client import cli as client_cli
 from remote_vscode_launcher.client import main as client_main
 from remote_vscode_launcher.common import (
     build_folder_uri,
+    build_launch_command,
     detect_client_ip,
     ensure_ssh_user,
+    format_command,
+    friendly_command,
     normalize_token,
 )
 from remote_vscode_launcher.server import ServerConfig, make_handler
@@ -38,6 +42,30 @@ def test_build_folder_uri():
     assert build_folder_uri("h", "a/b") == "vscode-remote://ssh-remote+h/a/b"
 
 
+def test_build_launch_command_and_format():
+    uri = "vscode-remote://ssh-remote+h/tmp"
+    assert build_launch_command("code", uri) == ["code", "--folder-uri", uri]
+    assert build_launch_command(None, uri) == ["code", "--folder-uri", uri]
+    # POSIX rendering: no quoting needed for the URI itself.
+    assert format_command(build_launch_command("code", uri)) == f"code --folder-uri {uri}"
+    # Paths with spaces get quoted in the flavour their shell understands.
+    assert format_command(["/usr/local/bin/code", "--folder-uri", "/a b"]) == \
+        "/usr/local/bin/code --folder-uri '/a b'"
+    assert format_command([r"C:\Program Files\VS Code\bin\code.cmd", uri]) == \
+        rf'"C:\Program Files\VS Code\bin\code.cmd" {uri}'
+
+
+def test_friendly_command_shortens_code_cli():
+    uri = "vscode-remote://ssh-remote+h/tmp"
+    assert friendly_command([r"C:\Program Files\Microsoft VS Code\bin\code.CMD", "--folder-uri", uri]) == \
+        ["code", "--folder-uri", uri]
+    assert friendly_command(["/usr/bin/code-insiders", "--folder-uri", uri]) == \
+        ["code-insiders", "--folder-uri", uri]
+    # Unknown editors keep their full path.
+    assert friendly_command(["/opt/other/bin/other", "--folder-uri", uri]) == \
+        ["/opt/other/bin/other", "--folder-uri", uri]
+
+
 def test_client_parser_defaults():
     defaults = {p.name: p.default for p in client_cli.params if isinstance(p, click.Option)}
     assert defaults["port"] == 8259
@@ -46,7 +74,7 @@ def test_client_parser_defaults():
 
 def test_client_version(capsys):
     from remote_vscode_launcher import __version__
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.2.2"
     assert client_main(["--version"]) == 0
     assert capsys.readouterr().out.strip() == __version__
     assert server_main(["-v"]) == 0
@@ -288,7 +316,7 @@ def test_server_launch_returns_no_pid(monkeypatch):
     fake_proc.pid = 1111
     monkeypatch.setattr(srv_mod.subprocess, "Popen", lambda *a, **k: fake_proc)
 
-    config = ServerConfig(host="127.0.0.1", port=0, token=None)
+    config = ServerConfig(host="127.0.0.1", port=0, token=None, code_binary=sys.executable)
     httpd = ThreadingHTTPServer((config.host, config.port), make_handler(config))
     port = httpd.server_address[1]
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -298,6 +326,8 @@ def test_server_launch_returns_no_pid(monkeypatch):
         assert status == 200
         assert data["status"] == "launched"
         assert data["uri"] == "vscode-remote://ssh-remote+h/tmp"
+        # The command line actually executed is reported back to the client.
+        assert data["cmd"] == [sys.executable, "--folder-uri", "vscode-remote://ssh-remote+h/tmp"]
         for key in ("launcher_pid", "vscode_pids", "pid", "pid_confidence"):
             assert key not in data
     finally:
@@ -314,19 +344,51 @@ def test_client_prints_success_confirm(monkeypatch, capsys):
     fake_proc.pid = 1111
     monkeypatch.setattr(srv_mod.subprocess, "Popen", lambda *a, **k: fake_proc)
 
+    config = ServerConfig(host="127.0.0.1", port=0, token=None, code_binary=sys.executable)
+    httpd = ThreadingHTTPServer((config.host, config.port), make_handler(config))
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        rc = client_main(["--server", "127.0.0.1", "--port", str(port), "--ssh-host", "h",
+                          "--path", "/tmp"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert out == (f"Remote VS Code launched successfully via 127.0.0.1:{port}. "
+                      f"Command line: {sys.executable} --folder-uri "
+                      f"vscode-remote://ssh-remote+h/tmp\n")
+        assert "taskkill" not in out
+        assert "pid" not in out.lower()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_client_prints_code_command_line(monkeypatch, capsys):
+    """Success line shows the editor command line, shortened to `code`."""
+    from unittest import mock
+
+    import remote_vscode_launcher.server as srv_mod
+
+    fake_proc = mock.Mock()
+    monkeypatch.setattr(srv_mod.subprocess, "Popen", lambda *a, **k: fake_proc)
+    monkeypatch.setattr(srv_mod, "find_code_binary",
+                        lambda explicit=None: r"C:\Program Files\Microsoft VS Code\bin\code.CMD")
+
     config = ServerConfig(host="127.0.0.1", port=0, token=None)
     httpd = ThreadingHTTPServer((config.host, config.port), make_handler(config))
     port = httpd.server_address[1]
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
     try:
-        rc = client_main(["--server", "127.0.0.1", "--port", str(port), "--ssh-host", "h"])
+        rc = client_main(["--server", "127.0.0.1", "--port", str(port), "--ssh-host", "dash3",
+                          "--path", "/home/user1/git/remote-vscode-launcher"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "successfully" in out
-        assert "vscode-remote://ssh-remote+h" in out
-        assert "taskkill" not in out
-        assert "pid" not in out.lower()
+        assert out == (f"Remote VS Code launched successfully via 127.0.0.1:{port}. "
+                      "Command line: code --folder-uri "
+                      "vscode-remote://ssh-remote+dash3/home/user1/git/"
+                      "remote-vscode-launcher\n")
     finally:
         httpd.shutdown()
         httpd.server_close()

@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import secrets
-import shlex
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,8 +50,10 @@ from .common import (
     LEGACY_ENV_PORT,
     LEGACY_ENV_TOKEN,
     build_folder_uri,
+    build_launch_command,
     ensure_ssh_user,
     find_code_binary,
+    format_command,
     normalize_token,
 )
 
@@ -208,7 +209,12 @@ def make_handler(config: ServerConfig):
                        *self.client_address[:2], ssh_host, remote_path, login_user or "-")
 
             if config.dry_run:
-                _send_json(self, 200, {"status": "dry-run", "uri": uri, **ssh_result})
+                _send_json(self, 200, {
+                    "status": "dry-run",
+                    "uri": uri,
+                    "cmd": build_launch_command(config.code_binary, uri),
+                    **ssh_result,
+                })
                 return
 
             try:
@@ -220,8 +226,8 @@ def make_handler(config: ServerConfig):
             try:
                 # Detached so the HTTP response returns immediately and the
                 # VS Code process outlives the handler thread.
-                cmd = [code_bin, "--folder-uri", uri]
-                log.info("Executing for %s:%d: %s", *self.client_address[:2], shlex.join(cmd))
+                cmd = build_launch_command(code_bin, uri)
+                log.info("Executing for %s:%d: %s", *self.client_address[:2], format_command(cmd))
                 kwargs: dict = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
                 if os.name == "nt":
                     kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0)  # type: ignore[attr-defined]
@@ -236,7 +242,7 @@ def make_handler(config: ServerConfig):
             log.info("VS Code launched successfully for %s:%d: uri=%s",
                      *self.client_address[:2], uri)
 
-            _send_json(self, 200, {"status": "launched", "uri": uri, **ssh_result})
+            _send_json(self, 200, {"status": "launched", "uri": uri, "cmd": cmd, **ssh_result})
 
     return LaunchHandler
 

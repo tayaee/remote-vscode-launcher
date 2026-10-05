@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import socket
 from pathlib import Path
@@ -77,6 +78,62 @@ def build_folder_uri(ssh_host: str, remote_path: str) -> str:
     while "//" in p:
         p = p.replace("//", "/")
     return f"vscode-remote://ssh-remote+{ssh_host}{p}"
+
+
+FOLDER_URI_FLAG = "--folder-uri"
+
+
+def build_launch_command(code_bin: str | None, uri: str) -> list[str]:
+    """Build the VS Code CLI command that opens *uri*.
+
+    Example:
+        >>> build_launch_command("code", "vscode-remote://ssh-remote+h/tmp")
+        ['code', '--folder-uri', 'vscode-remote://ssh-remote+h/tmp']
+    """
+    return [code_bin or "code", FOLDER_URI_FLAG, uri]
+
+
+def format_command(cmd: list[str]) -> str:
+    """Render *cmd* as a single, copy-pasteable command line.
+
+    Windows-style arguments (drive letter or backslashes) get double quotes so
+    the line pastes into ``cmd.exe``; everything else uses POSIX quoting.
+    """
+    parts: list[str] = []
+    for arg in cmd:
+        if not arg:
+            parts.append('""')
+        elif _looks_like_windows_path(arg):
+            parts.append(f'"{arg}"' if " " in arg else arg)
+        else:
+            parts.append(shlex.quote(arg))
+    return " ".join(parts)
+
+
+def _looks_like_windows_path(arg: str) -> bool:
+    """True for drive-letter (``C:\\x``) or backslash-containing arguments."""
+    return "\\" in arg or (len(arg) >= 2 and arg[0].isalpha() and arg[1] == ":")
+
+
+# Editor executables we can shorten to a bare command name when printed.
+_SHORTENABLE_EXES = {"code", "code-insiders", "codium"}
+
+
+def friendly_command(cmd: list[str]) -> list[str]:
+    """Shorten a known VS Code executable path to its bare command name.
+
+    ``C:\\Program Files\\...\\code.CMD`` (or ``/usr/bin/code``) becomes ``code``
+    so the printed command line stays short and copy-pasteable; unknown
+    executables are left untouched.
+    """
+    if not cmd:
+        return list(cmd)
+    exe = str(cmd[0])
+    base = os.path.basename(exe.replace("\\", "/")).lower()
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    if stem in _SHORTENABLE_EXES:
+        return [stem, *[str(a) for a in cmd[1:]]]
+    return [str(a) for a in cmd]
 
 
 def resolve_ssh_host(explicit: str | None, fallback_hostname: str | None = None) -> str | None:

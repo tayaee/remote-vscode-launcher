@@ -46,7 +46,10 @@ from .common import (
     LEGACY_ENV_PORT,
     LEGACY_ENV_TOKEN,
     build_folder_uri,
+    build_launch_command,
     detect_client_ip,
+    format_command,
+    friendly_command,
     local_hostname,
     normalize_token,
     resolve_ssh_host,
@@ -248,8 +251,11 @@ def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbos
                       file=sys.stderr)
             elif data.get("warning"):
                 print(f"[rvl] warning: {data['warning']}", file=sys.stderr)
-        print(f"Remote VS Code launched successfully via {server}:{port}")
-        print(f"  uri: {uri}")
+        reported = data.get("cmd") if isinstance(data, dict) else None
+        cmd = ([str(a) for a in reported] if isinstance(reported, list) and reported
+               else build_launch_command("code", str(uri)))
+        print(f"Remote VS Code launched successfully via {server}:{port}. "
+              f"Command line: {format_command(friendly_command(cmd))}")
         return 0
     print(f"[rvl] unexpected status HTTP {status}: {raw}", file=sys.stderr)
     return 1
