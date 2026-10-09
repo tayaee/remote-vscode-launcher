@@ -122,6 +122,25 @@ def _post_launch(url: str, body: bytes, token: str | None, timeout: float) -> tu
         return resp.read().decode("utf-8", "replace"), resp.status
 
 
+def _print_result(server: str, port: int, uri: str, ok: bool, reason: str = "") -> None:
+    """Final two-line result log (stdout).
+
+    Success:
+        rvl (remote vscode launcher) is connecting to <server>:<port>
+        to run [code --folder-uri <uri>].
+        succeeded.
+    Failure:
+        ... same first line ...
+        failed. (<reason>)
+    """
+    print(f"rvl (remote vscode launcher) is connecting to {server}:{port} "
+          f"to run [code --folder-uri {uri}].")
+    if ok:
+        print("succeeded.")
+    else:
+        print(f"failed. ({reason})")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point (keeps ``main(argv) -> int`` for tests/embedders)."""
     try:
@@ -217,6 +236,8 @@ def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbos
             elif e.code == 400:
                 print("[rvl] hint: try --ssh-host <Remote-SSH Host alias from Windows ssh config>.",
                       file=sys.stderr)
+            reason = f"HTTP {e.code} {detail}".strip()
+            _print_result(server, port, preview_uri, False, reason)
             return 1
         except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as e:
             last_error = e
@@ -237,6 +258,9 @@ def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbos
         if not auto_ip:
             print("  4. $SSH_CLIENT/$SSH_CONNECTION empty: you may be in tmux/screen; "
                   "pass --server explicitly.", file=sys.stderr)
+        reason_obj = getattr(last_error, "reason", last_error) \
+            if isinstance(last_error, urllib.error.URLError) else last_error
+        _print_result(server, port, preview_uri, False, str(reason_obj))
         return 1
 
     try:
@@ -258,6 +282,7 @@ def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbos
               f"Command line: {format_command(friendly_command(cmd))}")
         return 0
     print(f"[rvl] unexpected status HTTP {status}: {raw}", file=sys.stderr)
+    _print_result(server, port, uri, False, f"HTTP {status} {raw}".strip())
     return 1
 
 
