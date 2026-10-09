@@ -53,6 +53,7 @@ from .common import (
     local_hostname,
     normalize_token,
     resolve_ssh_host,
+    run_self_update,
 )
 
 
@@ -76,11 +77,14 @@ from .common import (
               help="HTTP timeout in seconds.")
 @click.option("--dry-run", is_flag=True,
               help="Print the request without sending it.")
+@click.option("--update", "--upgrade", "do_update", is_flag=True,
+              help="Self-update via 'uv tool install --force' and exit.")
 @click.option("--verbose", is_flag=True, help="Verbose output.")
 @click.version_option(__version__, "-v", "--version", message="%(version)s")
-def cli(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbose) -> int:
+def cli(path, path_opt, server, port, token, ssh_host, timeout, dry_run, do_update, verbose) -> int:
     """Trigger the Windows rvl-server listener to open VS Code here."""
-    return _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbose)
+    return _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, do_update,
+                verbose)
 
 
 def resolve_target_dir(path_arg: str | None, path_opt: str | None) -> str:
@@ -154,7 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         return getattr(e, "exit_code", 1)
 
 
-def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, verbose) -> int:
+def _run(path, path_opt, server, port, token, ssh_host, timeout, dry_run, do_update,
+           verbose) -> int:
+    if do_update:
+        return run_self_update()
+
     target_dir = resolve_target_dir(path, path_opt)
 
     server = (server or "").strip()

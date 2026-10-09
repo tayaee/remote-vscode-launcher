@@ -55,6 +55,7 @@ from .common import (
     find_code_binary,
     format_command,
     normalize_token,
+    run_self_update,
 )
 
 log = logging.getLogger("rvl-server")
@@ -263,11 +264,14 @@ def make_handler(config: ServerConfig):
               help="Default Remote-SSH Host alias when the trigger omits 'host'.")
 @click.option("--dry-run", is_flag=True,
               help="Accept requests but only log the URI instead of launching VS Code.")
+@click.option("--update", "--upgrade", "do_update", is_flag=True,
+              help="Self-update via 'uv tool install --force' and exit.")
 @click.option("--verbose", is_flag=True, help="Verbose logging.")
 @click.version_option(__version__, "-v", "--version", message="%(version)s")
-def cli(host, port, token, generate_token, code_binary, default_host, dry_run, verbose) -> int:
+def cli(host, port, token, generate_token, code_binary, default_host, dry_run, do_update, verbose) -> int:
     """Listen for HTTP triggers and open local VS Code on the remote directory."""
-    return _run(host, port, token, generate_token, code_binary, default_host, dry_run, verbose)
+    return _run(host, port, token, generate_token, code_binary, default_host, dry_run, do_update,
+                verbose)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -283,11 +287,15 @@ def main(argv: list[str] | None = None) -> int:
         return getattr(e, "exit_code", 1)
 
 
-def _run(host, port, token, generate_token, code_binary, default_host, dry_run, verbose) -> int:
+def _run(host, port, token, generate_token, code_binary, default_host, dry_run, do_update,
+           verbose) -> int:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
+    if do_update:
+        return run_self_update()
 
     if generate_token:
         print(secrets.token_urlsafe(32))

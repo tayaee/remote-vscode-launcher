@@ -74,7 +74,7 @@ def test_client_parser_defaults():
 
 def test_client_version(capsys):
     from remote_vscode_launcher import __version__
-    assert __version__ == "0.2.3"
+    assert __version__ == "0.2.4"
     assert client_main(["--version"]) == 0
     assert capsys.readouterr().out.strip() == __version__
     assert server_main(["-v"]) == 0

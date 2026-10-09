@@ -6,6 +6,8 @@ import os
 import shlex
 import shutil
 import socket
+import subprocess
+import sys
 from pathlib import Path
 
 DEFAULT_PORT = 8259
@@ -37,6 +39,57 @@ LEGACY2_ENV_CODE_BIN = "CODE_SERVER_BINARY"
 LEGACY2_ENV_SSH_CONFIG = "CODE_SSH_CONFIG"  # override path to ssh config (default: ~/.ssh/config)
 
 LAUNCH_PATHS = ("/launch", "/open", "/")
+
+# Self-update (``rvl --update`` / ``rvl-server --update``): force-reinstall the
+# package via uv, same command as install.sh / README.
+UPDATE_REPO = "git+https://github.com/tayaee/remote-vscode-launcher.git"
+UPDATE_PACKAGE = "remote-vscode-launcher"
+UPDATE_COMMAND = ["uv", "tool", "install", "--from", UPDATE_REPO, "--force", UPDATE_PACKAGE]
+# Fallback when plain ``uv`` is not on PATH (or fails): run it through mise,
+# which also covers mise-activated projects (uses the surrounding mise.toml).
+MISE_UPDATE_COMMAND = ["mise", "exec", "--", *UPDATE_COMMAND]
+
+
+def run_self_update() -> int:
+    """Print and run the ``uv tool install --force`` self-update command.
+
+    Displayed/logged (and suggested on failure) command is always the plain
+    ``+ uv ...`` form so callers can see and copy-paste it. Internally, when
+    the plain ``uv`` run is unavailable or fails, ``mise exec -- uv ...``
+    is attempted as a fallback.
+    Returns the process exit code (1 when both attempts fail).
+    """
+    print(f"+ {shlex.join(UPDATE_COMMAND)}", flush=True)
+    try:
+        completed = subprocess.run(UPDATE_COMMAND)  # noqa: S603
+    except FileNotFoundError:
+        print("[self-update] 'uv' not found on PATH; trying mise fallback...", file=sys.stderr)
+        completed = None
+    except OSError as e:
+        print(f"[self-update] uv run failed ({e}); trying mise fallback...", file=sys.stderr)
+        completed = None
+    else:
+        if completed.returncode == 0:
+            return 0
+        print(f"[self-update] uv exited with {completed.returncode}; "
+              "trying mise fallback...", file=sys.stderr)
+
+    print(f"+ {shlex.join(MISE_UPDATE_COMMAND)}", flush=True)
+    try:
+        mise_completed = subprocess.run(MISE_UPDATE_COMMAND)  # noqa: S603
+    except FileNotFoundError:
+        print("error: 'uv' not found on PATH and 'mise' fallback unavailable; "
+              "install uv first (https://docs.astral.sh/uv/).", file=sys.stderr)
+        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"error: failed to run self-update: {e}", file=sys.stderr)
+        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+        return 1
+    if mise_completed.returncode != 0:
+        print(f"error: self-update failed (exit {mise_completed.returncode}).", file=sys.stderr)
+        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+    return mise_completed.returncode
 
 
 def _env_first(*names: str) -> str:
