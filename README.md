@@ -22,7 +22,7 @@ $ rvl --version
 
 Register the Linux hostname (the outcome of `hostname` command) in `%USERPROFILE%\.ssh\config`. See the [OpenBSD ssh_config manual](https://man.openbsd.org/ssh_config) and [VS Code Remote-SSH documentation](https://code.visualstudio.com/docs/remote/ssh) for syntax.
 
-## Case 1: Local LAN (port 8259 directly reachable)
+## Case 1: Windows + Linux both on local LAN (port 8259 directly reachable)
 
 Same office / home LAN, where the Linux box can reach `http://<Windows-IP>:8259` directly. No reverse tunnel needed.
 
@@ -48,7 +48,7 @@ Expect: VS Code launches on Windows with the Linux project loaded.
 
 Not working? See [Troubleshooting](Troubleshooting.md).
 
-## Case 2: Home -> Cloud (port 8259 unreachable, reverse tunnel required)
+## Case 2: Windows at home, Linux on Cloud (AWS) (port 8259 unreachable, reverse tunnel required)
 
 Cloud VM (OCI / AWS / etc.) cannot dial back to your home Windows PC (NAT / firewall). Open a reverse tunnel from Windows so the cloud box can reach `rvl-server` via localhost.
 
