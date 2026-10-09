@@ -1,26 +1,18 @@
 @echo off
-REM Re-install `rvl` (and `rvl-server`) when needed.
-REM Same rules as install.sh:
+REM Install / update `rvl` (and `rvl-server`).
+REM Rules:
 REM   - uv missing      -^> install uv (via mise if present, else the official install.ps1)
-REM   - rvl missing     -^> force install (uv tool install --force)
-REM   - rvl ^= 7 days old -^> force install
-REM   - --force given         -^> force install immediately
+REM   - install rvl     -^> force install (uv tool install --force)
 REM Usage:
-REM   install.bat [--force^|-f] [--help^|-h]
+REM   install.bat [--help^|-h]
 
 setlocal
-set "FORCE=0"
-set "STALE_DAYS=7"
 set "REPO=git+https://github.com/tayaee/remote-vscode-launcher.git"
 set "PKG=remote-vscode-launcher"
 
 :parse_args
 if "%~1"=="" goto :args_done
-if "%~1"=="--force" (
-  set "FORCE=1"
-) else if "%~1"=="-f" (
-  set "FORCE=1"
-) else if "%~1"=="--help" (
+if "%~1"=="--help" (
   call :usage
   exit /b 0
 ) else if "%~1"=="-h" (
@@ -38,16 +30,13 @@ goto :parse_args
 call :ensure_uv
 if errorlevel 1 exit /b 1
 
-call :needs_install
-if errorlevel 1 exit /b 0
-
 call :do_install
 exit /b %ERRORLEVEL%
 
 REM ---------- subroutines below (called, never fall through) ----------
 
 :usage
-echo Usage: install.bat [--force ^| -f] [--help ^| -h]
+echo Usage: install.bat [--help ^| -h]
 exit /b 0
 
 :ensure_uv
@@ -70,29 +59,6 @@ if not errorlevel 1 exit /b 0
 echo [install.bat] error: uv install finished but 'uv' is still not on PATH. 1>&2
 echo [install.bat] hint: open a new terminal. 1>&2
 exit /b 1
-
-REM exit 0 = needs install, exit 1 = fresh (skip).
-:needs_install
-if "%FORCE%"=="1" exit /b 0
-where rvl >nul 2>nul
-if errorlevel 1 (
-  echo [install.bat] rvl not found; will install. 1>&2
-  exit /b 0
-)
-set "RC="
-for /f "delims=" %%i in ('where rvl 2^>nul') do if not defined RC set "RC=%%i"
-if not defined RC (
-  echo [install.bat] cannot locate rvl; will reinstall to be safe. 1>&2
-  exit /b 0
-)
-set "AGE="
-for /f "delims=" %%a in ('powershell -NoProfile -Command "& { $p='%RC%'; try { $age=((Get-Date)-(Get-Item -LiteralPath $p).LastWriteTime).TotalDays } catch { echo STALE; exit }; if ($age -ge %STALE_DAYS%) { echo STALE } else { echo FRESH } }" 2^>nul') do set "AGE=%%a"
-if "%AGE%"=="FRESH" (
-  echo [install.bat] rvl is fresh; skipping ^(use --force to reinstall^). 1>&2
-  exit /b 1
-)
-echo [install.bat] rvl is stale ^(^>= %STALE_DAYS%d^); will reinstall. 1>&2
-exit /b 0
 
 :do_install
 echo [install.bat] installing %PKG% ^(uv tool install --force^)... 1>&2

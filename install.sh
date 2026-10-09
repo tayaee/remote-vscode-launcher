@@ -1,33 +1,28 @@
 #!/usr/bin/env bash
-# Re-install `rvl` (and `rvl-server`) when needed.
+# Install / update `rvl` (and `rvl-server`).
 #
 # Rules:
 #   - uv missing  -> install uv (via mise if present, else curl)
-#   - rvl miss    -> force install (uv tool install --force)
-#   - rvl >= 7 days old -> force install
-#   - --force given     -> force install immediately
+#   - install rvl -> force install (uv tool install --force)
 #
 # Usage:
-#   ./install.sh [--force|-f] [--help|-h]
+#   ./install.sh [--help|-h]
 #
-# Idempotent: exits 0 whether it installed or skipped.
+# Idempotent: exits 0 on success.
 
 set -euo pipefail
 
-FORCE=0
-STALE_DAYS=7
 REPO="git+https://github.com/tayaee/remote-vscode-launcher.git"
 PKG="remote-vscode-launcher"
 
 log() { echo "[install.sh] $*" >&2; }
 
 usage() {
-    echo "Usage: ./install.sh [--force|-f] [--help|-h]"
+    echo "Usage: ./install.sh [--help|-h]"
 }
 
 for arg in "$@"; do
     case "$arg" in
-        --force|-f) FORCE=1 ;;
         --help|-h) usage; exit 0 ;;
         *) log "unknown argument: $arg"; usage >&2; exit 2 ;;
     esac
@@ -74,33 +69,6 @@ ensure_uv() {
     log "uv ready: $(uv --version)"
 }
 
-# 0 = needs install, 1 = fresh (skip).
-rvl_needs_install() {
-    if [ "$FORCE" -eq 1 ]; then
-        return 0
-    fi
-    local bin
-    bin="$(command -v rvl 2>/dev/null || true)"
-    if [ -z "${bin:-}" ] || [ ! -e "$bin" ]; then
-        log "rvl not found; will install."
-        return 0
-    fi
-    local mtime now age limit
-    if mtime="$(stat -c %Y "$bin" 2>/dev/null)" || mtime="$(stat -f %m "$bin" 2>/dev/null)"; then
-        now="$(date +%s)"
-        age=$((now - mtime))
-        limit=$((STALE_DAYS * 86400))
-        if [ "$age" -ge "$limit" ]; then
-            log "rvl is $((age / 86400)) days old (>= ${STALE_DAYS}d); will reinstall."
-            return 0
-        fi
-        log "rvl is fresh ($((age / 3600))h old); skipping (use --force to reinstall)."
-        return 1
-    fi
-    log "cannot stat rvl; will reinstall to be safe."
-    return 0
-}
-
 do_install() {
     log "installing ${PKG} (uv tool install --force)..."
     echo + uv tool install --from "$REPO" --force "$PKG"
@@ -122,9 +90,7 @@ do_install() {
 
 main() {
     ensure_uv
-    if rvl_needs_install; then
-        do_install
-    fi
+    do_install
 }
 
 main
