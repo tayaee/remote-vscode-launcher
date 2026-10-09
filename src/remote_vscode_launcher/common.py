@@ -50,6 +50,130 @@ UPDATE_COMMAND = ["uv", "tool", "install", "--from", UPDATE_REPO, "--force", UPD
 MISE_UPDATE_COMMAND = ["mise", "exec", "--", *UPDATE_COMMAND]
 
 
+def _find_windows_bin_dirs() -> list[Path]:
+    """Find directories where rvl / rvl-server executables might be installed."""
+    dirs: list[Path] = []
+    for name in ("rvl", "rvl-server"):
+        w = shutil.which(name)
+        if w:
+            p = Path(w).resolve().parent
+            if p not in dirs:
+                dirs.append(p)
+    local_bin = Path.home() / ".local" / "bin"
+    if local_bin.is_dir() and local_bin not in dirs:
+        dirs.append(local_bin)
+    uv_bin = os.environ.get("UV_TOOL_BIN_DIR")
+    if uv_bin:
+        p = Path(uv_bin).resolve()
+        if p.is_dir() and p not in dirs:
+            dirs.append(p)
+    py_dir = Path(sys.executable).resolve().parent
+    if py_dir not in dirs:
+        dirs.append(py_dir)
+    return dirs
+
+
+def _prepare_windows_self_update() -> list[tuple[Path, Path]]:
+    """On Windows, move existing entrypoint executables aside so uv can replace them.
+
+    Windows locks running executables against overwrite/delete (os error 32 / 5),
+    but NTFS allows renaming them while open. Moving them to temporary names
+    vacates the target filenames so ``uv tool install`` can write new binaries.
+    Returns a list of (target_path, backup_path) tuples.
+    """
+    if os.name != "nt":
+        return []
+
+    dirs = _find_windows_bin_dirs()
+
+    # 1. Clean up any leftover .old files from past runs whose processes have terminated
+    for d in dirs:
+        try:
+            for old in d.glob("rvl*.old*"):
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    # 2. Rename existing rvl.exe and rvl-server.exe
+    moved: list[tuple[Path, Path]] = []
+    for d in dirs:
+        for exe_name in ("rvl.exe", "rvl-server.exe"):
+            target = d / exe_name
+            if not target.is_file():
+                continue
+            # Avoid duplicate handling if multiple dirs resolved to the same file
+            try:
+                target_res = target.resolve()
+            except OSError:
+                target_res = target
+            if any(target_res == t.resolve() for t, _ in moved):
+                continue
+
+            backup = d / f"{exe_name}.old"
+            if backup.exists():
+                try:
+                    backup.unlink()
+                except OSError:
+                    import time
+                    backup = d / f"{exe_name}.old.{os.getpid()}.{time.time_ns()}"
+
+            try:
+                target.rename(backup)
+                moved.append((target, backup))
+            except OSError:
+                pass
+
+    return moved
+
+
+def _finish_windows_self_update(moved: list[tuple[Path, Path]], success: bool) -> None:
+    """Handle cleanup or rollback of moved executables on Windows."""
+    if os.name != "nt" or not moved:
+        return
+
+    if not success:
+        # Rollback: restore backup if target wasn't created
+        for target, backup in moved:
+            if not target.exists() and backup.exists():
+                try:
+                    backup.rename(target)
+                except OSError:
+                    pass
+        return
+
+    # Success: best-effort immediate unlink, then schedule delayed deletion
+    # via a detached background cmd (once the current process exits).
+    remaining: list[Path] = []
+    for _, backup in moved:
+        if backup.exists():
+            try:
+                backup.unlink()
+            except OSError:
+                remaining.append(backup)
+
+    if remaining:
+        # Windows cmd.exe 'del' requires backslashes in paths; pass command
+        # as a single string so cmd.exe handles inner quotes correctly.
+        del_cmds = " & ".join(f'del /f /q "{str(b.resolve()).replace("/", "\\")}"' for b in remaining)
+        full_cmd = f'cmd.exe /c "ping 127.0.0.1 -n 2 >nul & {del_cmds}"'
+        flags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+        try:
+            subprocess.Popen(
+                full_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+            )
+        except OSError:
+            pass
+
+
 def run_self_update() -> int:
     """Print and run the ``uv tool install --force`` self-update command.
 
@@ -59,37 +183,45 @@ def run_self_update() -> int:
     is attempted as a fallback.
     Returns the process exit code (1 when both attempts fail).
     """
-    print(f"+ {shlex.join(UPDATE_COMMAND)}", flush=True)
+    moved = _prepare_windows_self_update()
+    success = False
     try:
-        completed = subprocess.run(UPDATE_COMMAND)  # noqa: S603
-    except FileNotFoundError:
-        print("[self-update] 'uv' not found on PATH; trying mise fallback...", file=sys.stderr)
-        completed = None
-    except OSError as e:
-        print(f"[self-update] uv run failed ({e}); trying mise fallback...", file=sys.stderr)
-        completed = None
-    else:
-        if completed.returncode == 0:
-            return 0
-        print(f"[self-update] uv exited with {completed.returncode}; "
-              "trying mise fallback...", file=sys.stderr)
+        print(f"+ {shlex.join(UPDATE_COMMAND)}", flush=True)
+        try:
+            completed = subprocess.run(UPDATE_COMMAND)  # noqa: S603
+        except FileNotFoundError:
+            print("[self-update] 'uv' not found on PATH; trying mise fallback...", file=sys.stderr)
+            completed = None
+        except OSError as e:
+            print(f"[self-update] uv run failed ({e}); trying mise fallback...", file=sys.stderr)
+            completed = None
+        else:
+            if completed.returncode == 0:
+                success = True
+                return 0
+            print(f"[self-update] uv exited with {completed.returncode}; "
+                  "trying mise fallback...", file=sys.stderr)
 
-    print(f"+ {shlex.join(MISE_UPDATE_COMMAND)}", flush=True)
-    try:
-        mise_completed = subprocess.run(MISE_UPDATE_COMMAND)  # noqa: S603
-    except FileNotFoundError:
-        print("error: 'uv' not found on PATH and 'mise' fallback unavailable; "
-              "install uv first (https://docs.astral.sh/uv/).", file=sys.stderr)
-        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
-        return 1
-    except OSError as e:
-        print(f"error: failed to run self-update: {e}", file=sys.stderr)
-        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
-        return 1
-    if mise_completed.returncode != 0:
-        print(f"error: self-update failed (exit {mise_completed.returncode}).", file=sys.stderr)
-        print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
-    return mise_completed.returncode
+        print(f"+ {shlex.join(MISE_UPDATE_COMMAND)}", flush=True)
+        try:
+            mise_completed = subprocess.run(MISE_UPDATE_COMMAND)  # noqa: S603
+        except FileNotFoundError:
+            print("error: 'uv' not found on PATH and 'mise' fallback unavailable; "
+                  "install uv first (https://docs.astral.sh/uv/).", file=sys.stderr)
+            print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+            return 1
+        except OSError as e:
+            print(f"error: failed to run self-update: {e}", file=sys.stderr)
+            print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+            return 1
+        if mise_completed.returncode != 0:
+            print(f"error: self-update failed (exit {mise_completed.returncode}).", file=sys.stderr)
+            print(f"manual update: {shlex.join(UPDATE_COMMAND)}", file=sys.stderr)
+        else:
+            success = True
+        return mise_completed.returncode
+    finally:
+        _finish_windows_self_update(moved, success)
 
 
 def _env_first(*names: str) -> str:

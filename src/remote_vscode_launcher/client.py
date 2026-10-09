@@ -91,7 +91,7 @@ def resolve_target_dir(path_arg: str | None, path_opt: str | None) -> str:
     raw = path_opt or path_arg or os.getcwd()
     # Keep it absolute; do not require existence (dir may be transient).
     p = Path(raw)
-    if not p.is_absolute():
+    if not p.is_absolute() and not raw.startswith(("/", "\\")):
         p = Path(os.getcwd()) / p
     return os.path.normpath(str(p))
 

@@ -74,7 +74,7 @@ def test_client_parser_defaults():
 
 def test_client_version(capsys):
     from remote_vscode_launcher import __version__
-    assert __version__ == "0.2.4"
+    assert __version__ == "0.2.5"
     assert client_main(["--version"]) == 0
     assert capsys.readouterr().out.strip() == __version__
     assert server_main(["-v"]) == 0
@@ -392,3 +392,59 @@ def test_client_prints_code_command_line(monkeypatch, capsys):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_self_update_success(monkeypatch):
+    import subprocess
+
+    from remote_vscode_launcher import common
+
+    monkeypatch.setattr(common, "_prepare_windows_self_update", list)
+    monkeypatch.setattr(common, "_finish_windows_self_update", lambda moved, ok: None)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: subprocess.CompletedProcess(cmd, 0))
+
+    assert common.run_self_update() == 0
+
+
+def test_self_update_mise_fallback(monkeypatch):
+    import subprocess
+
+    from remote_vscode_launcher import common
+
+    monkeypatch.setattr(common, "_prepare_windows_self_update", list)
+    monkeypatch.setattr(common, "_finish_windows_self_update", lambda moved, ok: None)
+
+    calls = []
+
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+        if cmd == common.UPDATE_COMMAND:
+            return subprocess.CompletedProcess(cmd, 2)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert common.run_self_update() == 0
+    assert len(calls) == 2
+
+
+def test_windows_self_update_rename_and_rollback(tmp_path, monkeypatch):
+    from remote_vscode_launcher import common
+
+    monkeypatch.setattr(common.os, "name", "nt")
+    monkeypatch.setattr(common, "_find_windows_bin_dirs", lambda: [tmp_path])
+
+    rvl_exe = tmp_path / "rvl.exe"
+    rvl_exe.write_text("old_content")
+
+    # 1. Prepare: target should be moved aside to backup
+    moved = common._prepare_windows_self_update()
+    assert len(moved) == 1
+    target, backup = moved[0]
+    assert not target.exists()
+    assert backup.exists()
+
+    # 2. Finish with failure (rollback): target should be restored
+    common._finish_windows_self_update(moved, success=False)
+    assert target.exists()
+    assert target.read_text() == "old_content"
+
