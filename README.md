@@ -1,10 +1,10 @@
-# remote-vscode-launcher
+# remote-vscode-launcher (rvl)
 
 Want to run VS Code for a repository right from your terminal SSH session? Yes, you can do it with `rvl-server` and `rvl`.
 
 ## Install
 
-**Windows:**
+**Install rvl-server on Windows:**
 ```
 c:\> powershell -ExecutionPolicy Bypass -c "iwr https://astral.sh/uv/install.ps1 -useb | iex"
 c:\> uv --version
@@ -12,7 +12,7 @@ c:\> uv tool install --from git+https://github.com/tayaee/remote-vscode-launcher
 c:\> rvl-server --version
 ```
 
-**Linux:**
+**Install rvl client on Linux:**
 ```
 $ curl -LsSf https://astral.sh/uv/install.sh | sh
 $ uv --version
