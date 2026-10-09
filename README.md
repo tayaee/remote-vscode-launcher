@@ -9,13 +9,13 @@ Requires [uv](https://docs.astral.sh/uv/) on both Windows and Linux.
 **Install rvl-server on Windows:**
 ```
 c:\> uv tool install --from git+https://github.com/tayaee/remote-vscode-launcher.git --force remote-vscode-launcher
-c:\> rvl-server --version
+c:\> rvl-server -v
 ```
 
 **Install rvl client on Linux:**
 ```
 $ uv tool install --from git+https://github.com/tayaee/remote-vscode-launcher.git --force remote-vscode-launcher
-$ rvl --version
+$ rvl -v
 ```
 
 ## SSH config (Windows side)
